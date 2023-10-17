@@ -115,7 +115,7 @@ RUN sh -c "$(wget https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/ins
     && sed -i 's/^plugins=(.*)$/plugins=(zsh-autosuggestions zsh-syntax-highlighting git)/' ~/.zshrc
 
 ## install python
-RUN  git clone https://github.com/pyenv/pyenv.git ~/.pyenv \
+RUN git clone https://github.com/pyenv/pyenv.git ~/.pyenv \
     && git clone https://github.com/pyenv/pyenv-virtualenv.git ~/.pyenv/plugins/pyenv-virtualenv \
     && echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.custom_profile \
     && echo 'export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.custom_profile \
@@ -132,4 +132,5 @@ RUN  git clone https://github.com/pyenv/pyenv.git ~/.pyenv \
 ## install js
 WORKDIR ${HOME}
 RUN wget https://github.com/nvm-sh/nvm/archive/refs/tags/v0.39.5.tar.gz \ 
-    && tar -zxvf v0.39.5.tar.gz && ./nvm-0.39.5/install.sh && rm -rf v0.39.5.tar.gz && nvm install 16
+    && tar -zxvf v0.39.5.tar.gz && ./nvm-0.39.5/install.sh && rm -rf v0.39.5.tar.gz \
+    && source ~/.zshrc && nvm install 16
