@@ -1,0 +1,197 @@
+FROM iregistry.baidu-int.com/icoding/icoding-base-7u5:v3.0
+LABEL author="fanzheqiang@baidu.com"
+
+SHELL ["/usr/bin/bash", "-c"]
+# 设置环境变量
+ENV HOME=/home/work 
+RUN mkdir -p ${HOME} && chown work:work ${HOME}
+# 设置机器时间
+ENV LC_ALL en_US.utf8
+RUN echo "Asia/shanghai" > /etc/timezone
+
+################################# begin common #########################################
+# install helm && kubectl && get_instance_by_service
+RUN wget https://baidu-ide.bj.bcebos.com/cloud/tool/helm-v3.5.0-linux-amd64.tar.gz --no-check-certificate \
+    && tar -zxvf helm-v3.5.0-linux-amd64.tar.gz \
+    && rm -rf helm-v3.5.0-linux-amd64.tar.gz \
+    && mv linux-amd64/helm /usr/local/bin/helm \
+    && wget https://baidu-ide.bj.bcebos.com/cloud/tool/kubectl --no-check-certificate \
+    && mv kubectl /usr/local/bin/kubectl \
+    && chmod 755 /usr/local/bin/kubectl \
+    && wget https://baidu-ide.bj.bcebos.com/cloud/tool/get_instance_by_service --no-check-certificate \
+    && mv get_instance_by_service /usr/bin/get_instance_by_service \
+    && chmod 755 /usr/bin/get_instance_by_service
+
+RUN cd /lib64 && wget http://baidu-ide.bj.bcebos.com/cloud/tool/libnss_bns.so.2 \
+    && chown root:root /lib64/libnss_bns.so.2 \
+    && chmod 777 /lib64/libnss_bns.so.2 \
+    && sed  -i -r 's/hosts:(\s+)(.*)/hosts:\1\2 bns/g' /etc/nsswitch.conf
+
+# 执行命令
+RUN yum update -y && yum install -y glibc-headers gcc-c++ gcc curl-devel openssl-devel zlib-devel bzip2-devel readline-devel sqlite-devel ncurses-devel; exit 0
+RUN rpm --rebuilddb && yum install -y zsh patch lrzsz && chsh -s /bin/zsh work && chmod u+s /usr/bin/ping
+
+#安装curl
+WORKDIR ${HOME}
+ADD curl-8.2.1.tar.gz ${HOME}
+RUN cd curl-8.2.1 && ./configure --prefix=/usr/local/curl --with-openssl && make -j$(nproc) && make install \
+    && cd ${HOME} && rm -rf ${HOME}/curl-8.2.1
+ENV PATH=/usr/local/curl/bin:$PATH
+
+################################# begin redis #########################################
+RUN wget https://github.com/redis/redis/archive/7.2.0.tar.gz \
+    && tar xzf 7.2.0.tar.gz \ 
+    && cd redis-7.2.0 \
+    && make -j$(nproc)\
+    && make install PREFIX=/usr/local/redis \
+    && mkdir /usr/local/redis/etc \
+    && mv redis.conf /usr/local/redis/etc \
+    && echo "export PATH=/usr/local/redis/bin/:\$PATH" >> $HOME/.profile \
+    && sed -i 's/^daemonize no$/daemonize yes/' /usr/local/redis/etc/redis.conf \
+    && echo "/usr/local/redis/bin/redis-server /usr/local/redis/etc/redis.conf" >> /etc/rc.d/rc.local \
+    && rm -rf ${HOME}/redis-7.2.0 ${HOME}/7.2.0.tar.gz
+RUN chown work:work $HOME/.profile
+
+################################# begin mysql #########################################
+ADD mysql-5.7.43-1.el7.x86_64.rpm-bundle.tar .
+RUN rpm -e --nodeps mariadb-libs-1:5.5.68-1.el7.x86_64 \
+    && rpm -ivh mysql-community-common-5.7.43-1.el7.x86_64.rpm \
+    && rpm -ivh mysql-community-libs-5.7.43-1.el7.x86_64.rpm \
+    && rpm -ivh mysql-community-libs-compat-5.7.43-1.el7.x86_64.rpm \
+    && rpm -ivh mysql-community-devel-5.7.43-1.el7.x86_64.rpm \
+    && rpm -ivh mysql-community-embedded-5.7.43-1.el7.x86_64.rpm \
+    && rpm -ivh mysql-community-embedded-compat-5.7.43-1.el7.x86_64.rpm \
+    && rpm -ivh mysql-community-embedded-devel-5.7.43-1.el7.x86_64.rpm \
+    && rpm -ivh mysql-community-client-5.7.43-1.el7.x86_64.rpm \
+    && rpm -ivh mysql-community-server-5.7.43-1.el7.x86_64.rpm \
+    && rm -rf mysql*
+
+################################# begin ohmyzsh #########################################
+USER work
+# 安装ohmyzsh
+WORKDIR ${HOME}
+ADD install.sh ${HOME}
+RUN source /etc/bashrc && bash install.sh && rm -rf install.sh \
+    && git clone https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions \
+    && git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting \
+    && sed -i 's/^plugins=(.*)$/plugins=(zsh-autosuggestions zsh-syntax-highlighting git)/' ~/.zshrc
+
+RUN echo 'alias ll="ls -lah --color=auto"' >> $HOME/.profile \
+    && echo '[[ -s "/home/opt/deck/etc/bashrc" ]] && source "/home/opt/deck/etc/bashrc"' >> $HOME/.profile \
+    && sed -i '1s#^#source ${HOME}/.profile\n#' .zshrc
+
+################################# begin python #########################################
+# install pyenv
+WORKDIR ${HOME}
+RUN /bin/bash -c "$(curl -L http://pypi.baidu.com/static/pyenv/pyenv-installer)"
+# copy pip.conf & create pyenv bash & install python2 and python3
+RUN mkdir -p $HOME/.pip \ 
+    && echo "export PATH=${HOME}/.pyenv/bin:\$PATH" >> $HOME/.profile \
+    && echo "export PYTHON_BUILD_MIRROR_URL=\"http://pypi.baidu.com/static/pyenv/mirror\"" >> $HOME/.profile \
+    && echo "eval \"\$(pyenv init -)\"" >> $HOME/.profile \
+    && echo "eval \"\$(pyenv virtualenv-init -)\"" >> $HOME/.profile \
+    && mkdir -p $HOME/.pyenv/cache \
+    && cd $HOME/.pyenv/cache \
+    && source $HOME/.profile \
+    && pyenv install 2.7.18 \
+    && pyenv install 3.9.1 \
+    && pyenv global 3.9.1
+
+################################# begin js #########################################
+# install node.js
+WORKDIR ${HOME}
+ENV NVM_DIR=$HOME/.nvm
+
+RUN HTTPS_PROXY=http://172.19.57.45:3128 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | HTTPS_PROXY=http://172.19.57.45:3128 bash \
+    && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  \
+    && [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" \
+    && HTTPS_PROXY=http://172.19.57.45:3128 nvm install 16
+    
+RUN [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  \
+    && [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" \
+    && npm config set registry http://registry.npm.baidu-int.com \
+    && npm i -g yarn \
+    && HTTPS_PROXY=http://172.19.57.45:3128 curl -fsSL https://fnm.vercel.app/install | HTTPS_PROXY=http://172.19.57.45:3128 bash
+ENV PATH ${HOME}/.nodejs/bin/:$PATH
+
+################################# begin php #########################################
+# set env
+ENV ODP_HOME $HOME/odp
+RUN mkdir ${ODP_HOME}
+WORKDIR ${ODP_HOME}
+
+# install odp
+#RUN wget 'http://odp.baidu.com/download/odp-3.2.4-nginx-php-7.0.tar.gz' \
+ADD odp-3.2.4-nginx-php-7.0.tar.gz .
+USER root
+RUN chown -R work:work ${ODP_HOME}
+USER work
+RUN ${ODP_HOME}/bin/odp_install
+ENV PATH ${ODP_HOME}/bin:$PATH
+
+################################# begin java #########################################
+WORKDIR ${HOME}
+ENV GRADLE_HOME=${HOME}/gradle-6.3 \
+    JAVA_HOME=${HOME}/java/jdk-20.0.2 \
+    MAVEN_HOME=${HOME}/maven/apache-maven-3.6.3
+ENV PATH=$GRADLE_HOME/bin:$JAVA_HOME/bin:$MAVEN_HOME/bin:$PATH 
+
+#安装基础工具 
+RUN mkdir -p ${HOME}/maven ${HOME}/java \
+    && cd ${HOME} \
+    && wget "http://baidu-ide.bj.bcebos.com/cloud/tool/apache-maven-3.6.3-bin.tar.gz" \
+    && tar -zxf apache-maven-3.6.3-bin.tar.gz -C ${HOME}/maven \
+    && wget 'https://download.java.net/java/GA/jdk20.0.2/6e380f22cbe7469fa75fb448bd903d8e/9/GPL/openjdk-20.0.2_linux-x64_bin.tar.gz' \
+    && tar -zxf openjdk-20.0.2_linux-x64_bin.tar.gz -C ${HOME}/java \
+    && wget "http://baidu-ide.bj.bcebos.com/cloud/tool/gradle-6.3-all.zip" \
+    && unzip gradle-6.3-all.zip -d $HOME \
+    && mkdir $HOME/.gradle \
+    && mkdir $HOME/.m2 \
+    && curl http://baidu-ide.bj.bcebos.com/java/settings.xml > $HOME/.m2/settings.xml \
+    && rm apache-maven-3.6.3-bin.tar.gz openjdk-20.0.2_linux-x64_bin.tar.gz gradle-6.3-all.zip \
+    && source /etc/bashrc \
+    && git config --global alias.gpush '!f() { : push ; r=$1; [[ -z $r ]] && r=origin; b=$2; t=$(git rev-parse --abbrev-ref HEAD); t=${t#refs/heads/}; [[ -z $b ]] && b=$t; cmd="git push $r HEAD:refs/for/$b%topic=$t"; echo $cmd; echo; $cmd; }; f' \
+    && echo "alias gitp='git gpush'" >> ~/.profile \
+    && echo "if type shopt >/dev/null 2>&1; then" >> ~/.profile \
+    && echo "    shopt -s histappend" >> ~/.profile \
+    && echo "fi" >> ~/.profile \
+    && echo 'PROMPT_COMMAND="history -a;$PROMPT_COMMAND"'>>~/.profile
+
+################################# begin go #########################################
+# set go env
+ENV GOROOT=${HOME}/go19
+ENV GOPATH=${HOME}/gopath
+ENV PATH=$GOROOT/bin:$GOPATH/bin:$PATH
+ENV PATH=$PATH:/opt/compiler/gcc-8.2/bin
+
+# install go
+RUN wget https://baidu-ide.bj.bcebos.com/go/go19.tar.gz --no-check-certificate \
+    && tar -zxf go19.tar.gz -C $HOME \
+    && rm -rf go19.tar.gz \
+    && go env -w GO111MODULE="on" \
+    && go env -w GONOPROXY=\*\*.baidu.com\*\* \
+    && go env -w GONOSUMDB=\* \
+    && go env -w GOPROXY=https://goproxy.baidu-int.com,direct \
+    && go env -w GOPRIVATE=\*.baidu.com \
+    && go env -w CC=/opt/compiler/gcc-8.2/bin/gcc \
+    && go env -w CXX=/opt/compiler/gcc-8.2/bin/g++
+
+# download go tools
+RUN go install golang.org/x/tools/gopls@latest \
+    && go install github.com/go-delve/delve/cmd/dlv@latest \
+    && go install github.com/ramya-rao-a/go-outline@latest
+
+RUN rm -rf $HOME/.cache
+USER root
+
+
+# 安装protocbuf、 get_service_by_host
+RUN wget https://github.com/protocolbuffers/protobuf/releases/download/v3.17.3/protobuf-all-3.17.3.tar.gz \
+    && tar xf protobuf-all-3.17.3.tar.gz && cd protobuf-3.17.3 && ./configure --prefix=/usr/local && make -j$(nproc) && make install  \
+    && ldconfig && rm -rf ${HOME}/protobuf-all-3.17.3.tar.gz
+
+ADD get_service_by_host . 
+RUN mv get_service_by_host /usr/bin/get_service_by_host \
+    && chmod 755 /usr/bin/get_service_by_host \
+    && mkdir -p /noah/tmp/bns \
+    && chmod 755 /noah/tmp/bns
