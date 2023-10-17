@@ -1,0 +1,135 @@
+FROM centos:centos7
+LABEL author="zqfan321@gmail.com"
+
+SHELL ["/usr/bin/bash", "-c"]
+ENV LC_ALL en_US.utf8
+RUN echo "Asia/shanghai" > /etc/timezone
+RUN echo 'root:root' | chpasswd
+RUN groupadd work && useradd -m -g work work
+ENV HOME=/home/work 
+
+RUN yum -y update && yum install -y wget which lrzsz glibc-headers gcc-c++ gcc curl-devel zlib-devel bzip2-devel readline-devel \
+    sqlite-devel zsh expat-devel gettext-devel make vim perl-IPC-Cmd libffi-devel xz-devel patch libxml2-devel libcurl-devel \
+    bzip2-devel libmcrypt-devel libxslt-devel libpng-devel autoconf automake libtool telnet pcre-devel openssl-devel zip unzip \ 
+    libaio numactl net-tools
+
+## install openssl
+RUN wget --no-check-certificate  https://www.openssl.org/source/openssl-3.0.11.tar.gz  \
+    && tar -zxvf openssl-3.0.11.tar.gz && cd openssl-3.0.11 \
+    && ./config shared zlib --prefix=/usr/local/openssl \
+    && make -j$(nproc) && make install \
+    &&  echo '/usr/local/openssl/lib64' >> /etc/ld.so.conf && ldconfig \
+    && rm -rf /openssl-3.0.11*
+ENV PATH=/usr/local/openssl/bin:$PATH
+
+## install php
+WORKDIR ${HOME}
+RUN wget https://github.com/kkos/oniguruma/archive/v6.9.9.tar.gz -O oniguruma-6.9.9.tar.gz \
+    && tar -zxvf oniguruma-6.9.9.tar.gz && cd oniguruma-6.9.9/ \
+    && ./autogen.sh && ./configure --prefix=/usr --libdir=/lib64 && make -j$(nproc) && make install \
+    && cd .. && rm -rf oniguruma*
+RUN curl -L -O --tlsv1.3 https://libzip.org/download/libzip-1.2.0.tar.gz \
+    && tar -zxvf libzip-1.2.0.tar.gz && cd libzip-1.2.0 \
+    && ./configure && make -j$(nproc) && make install \
+    && cd .. && rm -rf libzip*
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/openssl/lib64/pkgconfig
+RUN wget https://www.php.net/distributions/php-8.2.11.tar.gz \
+    && tar -zxvf php-8.2.11.tar.gz && cd php-8.2.11 \
+    && ./configure --prefix=/usr/local/php --enable-fpm --with-mysqli --enable-mbstring --with-bz2 --with-curl --enable-gd --with-zip --with-zlib --with-openssl=/usr/local/openssl --with-curl --with-pear \
+    && make -j$(nproc) && make install \
+    && cp php.ini-development /usr/local/php/lib/php.ini \
+    && cd .. && rm -rf php-8.2.11.tar.gz \
+    && cd /usr/local/php/etc && cp php-fpm.conf.default php-fpm.conf \
+    && cp php-fpm.d/www.conf.default php-fpm.d/www.conf
+ENV PATH=/usr/local/php/bin:/usr/local/php/sbin:$PATH
+
+## install nginx
+WORKDIR ${HOME}
+RUN wget https://nginx.org/download/nginx-1.24.0.tar.gz \
+    && tar -zxvf nginx-1.24.0.tar.gz && cd nginx-1.24.0 \
+    && ./configure --prefix=/usr/local/nginx --with-openssl=/usr/local/openssl --with-http_stub_status_module \
+    && make -j$(nproc) && make install \
+    && cd .. && rm -rf nginx-1.24.0*
+ENV PATH=/usr/local/nginx/sbin:$PATH
+
+## install go
+ENV GOROOT=/usr/local/go/
+ENV GOPATH=${HOME}/go
+ENV PATH=$GOROOT/bin:$GOPATH/bin:$PATH
+RUN wget https://go.dev/dl/go1.20.10.linux-amd64.tar.gz \
+    && tar -zxvf go1.20.10.linux-amd64.tar.gz -C /usr/local/ && rm -rf go1.20.10.linux-amd64.tar.gz\
+    && go env -w GO111MODULE="on"
+
+# ## install java
+WORKDIR ${HOME}
+ENV GRADLE_HOME=/usr/local/gradle/gradle-8.4 \
+    JAVA_HOME=/usr/local/java/jdk-20.0.2 \
+    MAVEN_HOME=/usr/local/maven/apache-maven-3.9.5
+ENV PATH=$GRADLE_HOME/bin:$JAVA_HOME/bin:$MAVEN_HOME/bin:$PATH 
+RUN mkdir -p /usr/local/maven /usr/local/java /usr/local/gradle && cd /usr/local \
+    && wget https://dlcdn.apache.org/maven/maven-3/3.9.5/binaries/apache-maven-3.9.5-bin.tar.gz \
+    && tar -zxf apache-maven-3.9.5-bin.tar.gz -C /usr/local/maven \
+    && wget https://download.java.net/java/GA/jdk20.0.2/6e380f22cbe7469fa75fb448bd903d8e/9/GPL/openjdk-20.0.2_linux-x64_bin.tar.gz \
+    && tar -zxf openjdk-20.0.2_linux-x64_bin.tar.gz -C /usr/local/java \
+    && wget https://services.gradle.org/distributions/gradle-8.4-all.zip \
+    && unzip gradle-8.4-all.zip -d /usr/local/gradle/ \
+    && rm apache-maven-3.9.5-bin.tar.gz openjdk-20.0.2_linux-x64_bin.tar.gz gradle-8.4-all.zip
+
+## install git
+RUN wget https://github.com/git/git/archive/refs/tags/v2.17.0.tar.gz \
+    && tar -zxvf v2.17.0.tar.gz && cd git-2.17.0 \
+    && make prefix=/usr/local -I/usr/local/openssl/include -j$(nproc) all && make prefix=/usr/local install \
+    && cd .. && rm -rf v2.17.0.tar.gz git-2.17.0
+
+## install redis
+RUN wget https://github.com/redis/redis/archive/7.2.0.tar.gz \
+    && tar xzf 7.2.0.tar.gz && cd redis-7.2.0 \
+    && make -j$(nproc) && make install PREFIX=/usr/local/redis \
+    && mkdir /usr/local/redis/etc \
+    && mv redis.conf /usr/local/redis/etc \
+    && sed -i 's/^daemonize no$/daemonize yes/' /usr/local/redis/etc/redis.conf \
+    && rm -rf ${HOME}/redis-7.2.0 ${HOME}/7.2.0.tar.gz
+ENV PATH=/usr/local/redis/bin/:$PATH
+
+## install mysql 
+RUN wget https://dev.mysql.com/get/Downloads/MySQL-5.7/mysql-5.7.43-1.el7.x86_64.rpm-bundle.tar \
+    && tar -xvf mysql-5.7.43-1.el7.x86_64.rpm-bundle.tar \ 
+    && rpm -ivh mysql-community-common-5.7.43-1.el7.x86_64.rpm \
+    && rpm -ivh mysql-community-libs-5.7.43-1.el7.x86_64.rpm \
+    && rpm -ivh mysql-community-libs-compat-5.7.43-1.el7.x86_64.rpm \
+    && rpm -ivh mysql-community-devel-5.7.43-1.el7.x86_64.rpm \
+    && rpm -ivh mysql-community-embedded-5.7.43-1.el7.x86_64.rpm \
+    && rpm -ivh mysql-community-embedded-compat-5.7.43-1.el7.x86_64.rpm \
+    && rpm -ivh mysql-community-embedded-devel-5.7.43-1.el7.x86_64.rpm \
+    && rpm -ivh mysql-community-client-5.7.43-1.el7.x86_64.rpm \
+    && rpm -ivh mysql-community-server-5.7.43-1.el7.x86_64.rpm \
+    && rm -rf mysql*
+
+## install ohmyzsh
+RUN chsh -s /bin/zsh work
+USER work
+WORKDIR ${HOME}
+RUN sh -c "$(wget https://raw.github.com/robbyrussell/oh-my-zsh/master/tools/install.sh -O -)" \
+    && git clone https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions \
+    && git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting \
+    && sed -i 's/^plugins=(.*)$/plugins=(zsh-autosuggestions zsh-syntax-highlighting git)/' ~/.zshrc
+
+## install python
+RUN  git clone https://github.com/pyenv/pyenv.git ~/.pyenv \
+    && git clone https://github.com/pyenv/pyenv-virtualenv.git ~/.pyenv/plugins/pyenv-virtualenv \
+    && echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.custom_profile \
+    && echo 'export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.custom_profile \
+    && echo 'eval "$(pyenv init -)"' >> ~/.custom_profile \ 
+    && echo 'eval "$(pyenv virtualenv-init -)"' >> ~/.custom_profile \ 
+    && echo 'export LDFLAGS="-L/usr/local/openssl/lib64"' >> ~/.custom_profile \
+    && echo 'export CPPFLAGS="-I/usr/local/openssl/include"' >> ~/.custom_profile \
+    && echo 'source ~/.custom_profile' >> ~/.zshrc \
+    && source ~/.custom_profile \ 
+    && pyenv install 3.12.0 \
+    && pyenv install 2.7.18 \
+    && pyenv global 3.12.0
+
+## install js
+WORKDIR ${HOME}
+RUN wget https://github.com/nvm-sh/nvm/archive/refs/tags/v0.39.5.tar.gz \ 
+    && tar -zxvf v0.39.5.tar.gz && ./nvm-0.39.5/install.sh && rm -rf v0.39.5.tar.gz && nvm install 16
